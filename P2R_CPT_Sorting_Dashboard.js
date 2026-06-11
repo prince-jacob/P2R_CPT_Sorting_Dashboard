@@ -11,8 +11,8 @@
 // @grant        GM_setClipboard
 // @grant        GM_info
 // @connect      raw.githubusercontent.com
-// @updateURL    https://raw.githubusercontent.com/YOURNAME/tampermonkey-scripts/main/p2r-loader.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOURNAME/tampermonkey-scripts/main/p2r-loader.user.js
+// @updateURL    https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/refs/heads/main/P2R_CPT_Sorting_Dashboard.js
+// @downloadURL  https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/refs/heads/main/P2R_CPT_Sorting_Dashboard.js
 // @run-at       document-idle
 // ==/UserScript==
 
