@@ -7,8 +7,8 @@
 // @match        https://rodeo-dub.amazon.com/NCL1/Search*
 // @grant        GM_xmlhttpRequest
 // @connect      raw.githubusercontent.com
-// @updateURL    https://raw.githubusercontent.com/YOURNAME/tampermonkey-scripts/main/p2r-loader.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOURNAME/tampermonkey-scripts/main/p2r-loader.user.js
+// @updateURL    https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/refs/heads/main/p2r-main.js
+// @downloadURL  https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/refs/heads/main/p2r-main.js
 // @run-at       document-idle
 // ==/UserScript==
 
