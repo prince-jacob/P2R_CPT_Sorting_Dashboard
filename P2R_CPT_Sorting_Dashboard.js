@@ -1,17 +1,17 @@
 // ==UserScript==
 // @name         Rodeo P2R CPT Sorting Dashboard - NCL1
 // @namespace    wprijaco.rodeo.p2r.shipment.dashboard
-// @version      1.9
+// @version      1.9.4
 // @description  Live P2R dashboard with safer scan engine, toast/status messages, missing-column checks, persisted UI, and official-script marker.
 // @author       Prince Jacob (Wprijaco)
-// @creator      Prince Jacob (Wprijaco)
-// @match        https://rodeo-dub.amazon.com/NCL1/Search*
-// @match        file:///*
+// @include      https://rodeo-dub.amazon.com/NCL1/Search?_enabledColumns=on&enabledColumns=ASIN_TITLES&enabledColumns=DEMAND_ID&enabledColumns=OUTER_SCANNABLE_ID&searchKey=tspsP2R*
+// @include      https://rodeo-dub.amazon.com/NCL1/Search?_enabledColumns=on&enabledColumns=ASIN_TITLES&enabledColumns=DEMAND_ID&enabledColumns=OUTER_SCANNABLE_ID&searchKey=tspsp2r*
+// @match        file:///Z:/Amazon%20CR%20Work/CPT%20Sorter/Search%20Result%20List%20(08_06_2026%2020%EF%BC%9A31%EF%BC%9A31).html
 // @grant        GM_setClipboard
 // @grant        GM_info
 // @connect      raw.githubusercontent.com
-// @updateURL    https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/refs/heads/main/P2R_CPT_Sorting_Dashboard.js
-// @downloadURL  https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/refs/heads/main/P2R_CPT_Sorting_Dashboard.js
+// @updateURL    https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/main/P2R_CPT_Sorting_Dashboard.js
+// @downloadURL  https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/main/P2R_CPT_Sorting_Dashboard.js
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -24,20 +24,33 @@
   function isAllowedPage() {
     const url = new URL(location.href);
 
+    // TEST MODE: allow saved Rodeo Search Result List HTML files.
     if (url.protocol === 'file:') {
       return /Search\s*Result\s*List/i.test(decodeURIComponent(url.href));
     }
 
+    // LIVE MODE: run only on the NCL1 P2R Rodeo search page with the exact required setup.
     if (url.hostname !== 'rodeo-dub.amazon.com') return false;
     if (url.pathname !== '/NCL1/Search') return false;
-    if (url.searchParams.get('searchKey') !== 'tspsP2R') return false;
 
-    const enabled = url.searchParams.getAll('enabledColumns');
+    const enabledColumns = url.searchParams.getAll('enabledColumns');
+
+    const hasRequiredEnabledColumns =
+      enabledColumns.length === 3 &&
+      enabledColumns[0] === 'ASIN_TITLES' &&
+      enabledColumns[1] === 'DEMAND_ID' &&
+      enabledColumns[2] === 'OUTER_SCANNABLE_ID';
+
+    const allowedKeys = new Set(['_enabledColumns', 'enabledColumns', 'searchKey', '_tmRefresh']);
+
+    for (const key of url.searchParams.keys()) {
+      if (!allowedKeys.has(key)) return false;
+    }
 
     return (
-      enabled.includes('ASIN_TITLES') &&
-      enabled.includes('DEMAND_ID') &&
-      enabled.includes('OUTER_SCANNABLE_ID')
+      url.searchParams.get('_enabledColumns') === 'on' &&
+      (url.searchParams.get('searchKey') || '').toLowerCase() === 'tspsp2r' &&
+      hasRequiredEnabledColumns
     );
   }
 
@@ -46,10 +59,10 @@
   /******************************************************************
    * SETTINGS
    ******************************************************************/
-  const SCRIPT_VERSION = '1.9';
+  const SCRIPT_VERSION = '1.9.4';
   const OFFICIAL_SCRIPT_MARKER = 'OFFICIAL_P2R_CPT_SORTER_PRINCE_JACOB_V1';
 
-  // When we move this to GitHub, add @updateURL and @downloadURL in the metadata above.
+  // GitHub auto-update is enabled via @updateURL and @downloadURL in the metadata above.
   // Keep this main script local and fast: no repeated external checks during live work.
   const CHECK_INTERVAL_MS = 2500;
   const TAB_REFRESH_INTERVAL_MS = 15000;
