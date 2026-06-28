@@ -1,15 +1,20 @@
 // ==UserScript==
 // @name         Rodeo P2R CPT Sorting Dashboard - NCL1
 // @namespace    wprijaco.rodeo.p2r.shipment.dashboard
-// @version      1.9.4
-// @description  Live P2R dashboard with safer scan engine, toast/status messages, missing-column checks, persisted UI, and official-script marker.
+// @version      1.9.8
+// @description  Live P2R dashboard with safer scan engine, persisted UI, official-script marker, and optional Firebase phone dashboard sync + saved HTML test support.
 // @author       Prince Jacob (Wprijaco)
 // @include      https://rodeo-dub.amazon.com/NCL1/Search?_enabledColumns=on&enabledColumns=ASIN_TITLES&enabledColumns=DEMAND_ID&enabledColumns=OUTER_SCANNABLE_ID&searchKey=tspsP2R*
 // @include      https://rodeo-dub.amazon.com/NCL1/Search?_enabledColumns=on&enabledColumns=ASIN_TITLES&enabledColumns=DEMAND_ID&enabledColumns=OUTER_SCANNABLE_ID&searchKey=tspsp2r*
 // @match        file:///Z:/Amazon%20CR%20Work/CPT%20Sorter/Search%20Result%20List%20(08_06_2026%2020%EF%BC%9A31%EF%BC%9A31).html
+// @match        file://*/*
 // @grant        GM_setClipboard
 // @grant        GM_info
+// @grant        GM_xmlhttpRequest
 // @connect      raw.githubusercontent.com
+// @connect      p2r-live-dashboard-default-rtdb.europe-west1.firebasedatabase.app
+// @connect      *.firebaseio.com
+// @connect      *.firebasedatabase.app
 // @updateURL    https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/main/P2R_CPT_Sorting_Dashboard.js
 // @downloadURL  https://raw.githubusercontent.com/prince-jacob/P2R_CPT_Sorting_Dashboard/main/P2R_CPT_Sorting_Dashboard.js
 // @run-at       document-idle
@@ -59,7 +64,7 @@
   /******************************************************************
    * SETTINGS
    ******************************************************************/
-  const SCRIPT_VERSION = '1.9.4';
+  const SCRIPT_VERSION = '1.9.8';
   const OFFICIAL_SCRIPT_MARKER = 'OFFICIAL_P2R_CPT_SORTER_PRINCE_JACOB_V1';
 
   // GitHub auto-update is enabled via @updateURL and @downloadURL in the metadata above.
@@ -71,6 +76,35 @@
 
   const RED_MINUTES_LEFT = 70;
   const ORANGE_MINUTES_LEFT = 90;
+
+  /******************************************************************
+   * FIREBASE PHONE DASHBOARD SYNC
+   *
+   * Current sorter view/function is unchanged. This module only sends
+   * the already-captured live data to Firebase after each successful
+   * scan. Leave enabled=false until Firebase Realtime Database is ready.
+   ******************************************************************/
+  const FIREBASE_SYNC = {
+    enabled: true,
+
+    // Your Realtime Database URL.
+    databaseURL: 'https://p2r-live-dashboard-default-rtdb.europe-west1.firebasedatabase.app',
+
+    site: 'NCL1',
+    path: 'p2rLive/NCL1/current',
+
+    // Keep blank when using temporary Firebase test rules.
+    // If you later add auth rules, paste a database auth token here.
+    authToken: '',
+
+    // Avoid writing too often if Rodeo is changing quickly.
+    minSyncIntervalMs: 5000
+  };
+
+  let lastFirebaseSyncAt = 0;
+  let lastFirebaseSignature = '';
+  let firebaseSyncDisabledLogged = false;
+  let firebaseSyncInvalidLogged = false;
 
   const ISSUE_RULES = [
     { key: 'missing', label: 'Missing', emoji: '🚩', match: /missing/i, className: 'rp2r-missing' },
@@ -793,6 +827,145 @@
     ].join(' | ');
   }
 
+  function makeFirebaseSafe(value) {
+    return String(value == null ? '' : value)
+      .replace(/[.#$/\[\]]/g, '_')
+      .trim() || 'Unknown';
+  }
+
+  function buildFirebasePayload(groups) {
+    const floors = { P2: [], P3: [], P4: [], Unknown: [] };
+
+    groups.forEach(group => {
+      const floorList = String(group.floor || 'Unknown')
+        .split(',')
+        .map(x => cleanText(x))
+        .filter(Boolean);
+
+      const primaryFloor = floorList.find(f => ['P2', 'P3', 'P4'].includes(f)) || 'Unknown';
+
+      const shipment = {
+        shipmentId: group.shipmentId || '',
+        floor: group.floor || primaryFloor,
+        expectedShipDate: group.expected || '',
+        minutesLeft: group.minutesLeft,
+        timeLeft: group.minutesLeft === null ? '-' : formatMinutesLeft(group.minutesLeft),
+        urgency: group.urgency ? group.urgency.key : 'none',
+        itemCount: group.items.length,
+        items: group.items.map(item => ({
+          shipmentId: item.shipmentId || '',
+          fnsku: item.fnsku || '',
+          title: item.title || '',
+          expectedShipDate: item.expected || '',
+          scannableId: item.scannableText || '',
+          station: item.station || '',
+          floor: item.floor || primaryFloor,
+          processPath: item.process || '',
+          dwellTime: item.dwell || '',
+          dwellMinutes: item.dwellMins || 0,
+          issue: item.issue || '',
+          location: item.location || '',
+          qty: item.qty || '',
+          demandId: item.demandId || '',
+          workPool: item.workPool || ''
+        }))
+      };
+
+      if (!floors[primaryFloor]) floors[primaryFloor] = [];
+      floors[primaryFloor].push(shipment);
+    });
+
+    Object.keys(floors).forEach(floor => {
+      floors[floor].sort((a, b) => {
+        const am = a.minutesLeft === null ? 999999 : a.minutesLeft;
+        const bm = b.minutesLeft === null ? 999999 : b.minutesLeft;
+        return am - bm;
+      });
+    });
+
+    const red = groups.filter(g => g.urgency && g.urgency.key === 'red').length;
+    const orange = groups.filter(g => g.urgency && g.urgency.key === 'orange').length;
+
+    return {
+      site: FIREBASE_SYNC.site,
+      scriptVersion: SCRIPT_VERSION,
+      updatedAt: Date.now(),
+      updatedAtText: new Date().toLocaleString(),
+      totalShipments: groups.length,
+      redShipments: red,
+      orangeShipments: orange,
+      floors
+    };
+  }
+
+  function firebaseRequest(method, url, data) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest === 'function') {
+        GM_xmlhttpRequest({
+          method,
+          url,
+          headers: { 'Content-Type': 'application/json' },
+          data: data == null ? undefined : JSON.stringify(data),
+          timeout: 10000,
+          onload: res => {
+            if (res.status >= 200 && res.status < 300) resolve(res.responseText);
+            else reject(new Error(`Firebase HTTP ${res.status}: ${res.responseText || ''}`));
+          },
+          onerror: () => reject(new Error('Firebase network error')),
+          ontimeout: () => reject(new Error('Firebase request timeout'))
+        });
+        return;
+      }
+
+      fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: data == null ? undefined : JSON.stringify(data)
+      })
+        .then(res => res.ok ? res.text() : res.text().then(t => Promise.reject(new Error(`Firebase HTTP ${res.status}: ${t}`))))
+        .then(resolve)
+        .catch(reject);
+    });
+  }
+
+  function syncToFirebase(groups) {
+    if (!FIREBASE_SYNC.enabled) {
+      if (!firebaseSyncDisabledLogged) {
+        firebaseSyncDisabledLogged = true;
+        console.log('[P2R CPT Sorter] Firebase sync is OFF. Set FIREBASE_SYNC.enabled=true and databaseURL to push phone-dashboard data.');
+      }
+      return;
+    }
+    if (!FIREBASE_SYNC.databaseURL || !/^https:\/\//i.test(FIREBASE_SYNC.databaseURL)) {
+      if (!firebaseSyncInvalidLogged) {
+        firebaseSyncInvalidLogged = true;
+        console.warn('[P2R CPT Sorter] Firebase sync enabled but databaseURL is missing/invalid.');
+      }
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastFirebaseSyncAt < FIREBASE_SYNC.minSyncIntervalMs) return;
+
+    const payload = buildFirebasePayload(groups);
+    const signature = JSON.stringify(payload.floors);
+
+    // Still send a heartbeat roughly every 30 seconds even when data is unchanged.
+    if (signature === lastFirebaseSignature && now - lastFirebaseSyncAt < 30000) return;
+
+    lastFirebaseSyncAt = now;
+    lastFirebaseSignature = signature;
+
+    const base = FIREBASE_SYNC.databaseURL.replace(/\/+$/, '');
+    const path = FIREBASE_SYNC.path.replace(/^\/+|\/+$/g, '');
+    const auth = FIREBASE_SYNC.authToken ? `?auth=${encodeURIComponent(FIREBASE_SYNC.authToken)}` : '';
+    const url = `${base}/${path}.json${auth}`;
+
+    firebaseRequest('PUT', url, payload)
+      .then(() => console.log(`[P2R CPT Sorter] Firebase synced ${payload.totalShipments} shipment(s).`))
+      .catch(err => console.warn('[P2R CPT Sorter] Firebase sync failed:', err));
+  }
+
   function groupCopyLine(group) {
     const head = [
       `SHIPMENT: ${group.shipmentId}`,
@@ -1209,6 +1382,7 @@
 
       detectChanges(rows);
       render();
+      syncToFirebase(groups);
     } catch (err) {
       console.error('[P2R CPT Sorter] Scan failed:', err);
       setWarning(`Scan error: ${err && err.message ? err.message : err}`);
